@@ -1,3 +1,4 @@
-#!/bin/bash
-pip install --upgrade pip setuptools wheel
-pip install flask gunicorn Pillow numpy
+# requirements.txt - ДЛЯ RENDER
+flask==2.3.3
+Pillow==10.0.0
+gunicorn==21.2.0
